@@ -3,4 +3,5 @@ numpy
 Pillow
 PyWavelets
 cryptography
+opencv-python-headless
 
