@@ -1,0 +1,324 @@
+import io
+import json
+import base64
+import secrets
+from dataclasses import dataclass
+from typing import Tuple, Dict, Any
+
+import numpy as np
+import pywt
+from PIL import Image
+import streamlit as st
+
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import (
+    load_pem_private_key, load_pem_public_key,
+    Encoding, PrivateFormat, PublicFormat, NoEncryption
+)
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+
+# -------------------- Utilities --------------------
+
+def pil_to_array_gray(img: Image.Image) -> np.ndarray:
+    return np.array(img.convert("L"), dtype=np.float32)
+
+
+def array_to_pil_gray(arr: np.ndarray) -> Image.Image:
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr, mode="L")
+
+
+def bytes_from_image(img: Image.Image, fmt: str = "PNG") -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format=fmt)
+    return buf.getvalue()
+
+
+def image_from_bytes(b: bytes) -> Image.Image:
+    return Image.open(io.BytesIO(b)).convert("RGB")
+
+
+def b64e(b: bytes) -> str:
+    return base64.b64encode(b).decode("utf-8")
+
+
+def b64d(s: str) -> bytes:
+    return base64.b64decode(s.encode("utf-8"))
+
+
+# -------------------- DWT-SVD Watermarking --------------------
+
+
+@dataclass
+class WatermarkSideInfo:
+    S_cover: np.ndarray
+    Uw: np.ndarray
+    Vtw: np.ndarray
+    alpha: float
+    cover_shape: Tuple[int, int]
+    wm_shape: Tuple[int, int]
+
+
+def dwt_svd_embed(cover_img: Image.Image, wm_img: Image.Image, alpha: float = 0.05):
+    C = pil_to_array_gray(cover_img)
+    LL, (LH, HL, HH) = pywt.dwt2(C, 'haar')
+
+    LL_h, LL_w = LL.shape
+    wm_resized = wm_img.convert("L").resize((LL_w, LL_h), Image.BICUBIC)
+    W = np.array(wm_resized, dtype=np.float32)
+
+    Uc, Sc, Vct = np.linalg.svd(LL, full_matrices=False)
+    Uw, Sw, Vtw = np.linalg.svd(W, full_matrices=False)
+
+    S_prime = Sc + alpha * Sw
+    LL_prime = (Uc @ np.diag(S_prime) @ Vct).astype(np.float32)
+
+    Cw = pywt.idwt2((LL_prime, (LH, HL, HH)), 'haar')
+    watermarked = array_to_pil_gray(Cw)
+
+    side = WatermarkSideInfo(
+        S_cover=Sc.astype(np.float32),
+        Uw=Uw.astype(np.float32),
+        Vtw=Vtw.astype(np.float32),
+        alpha=float(alpha),
+        cover_shape=C.shape,
+        wm_shape=W.shape,
+    )
+    return watermarked, side
+
+
+def dwt_svd_extract(wm_image: Image.Image, side: WatermarkSideInfo) -> Image.Image:
+    Cw = pil_to_array_gray(wm_image)
+    LLw, _ = pywt.dwt2(Cw, 'haar')
+    Ucw, Scw, Vtcw = np.linalg.svd(LLw, full_matrices=False)
+
+    Sw_est = (Scw - side.S_cover) / max(side.alpha, 1e-8)
+    W_est = (side.Uw @ np.diag(Sw_est) @ side.Vtw)
+    W_est = np.clip(W_est, 0, 255).astype(np.uint8)
+
+    img = Image.fromarray(W_est, mode="L").resize((side.wm_shape[1], side.wm_shape[0]), Image.NEAREST)
+    return img
+
+
+def sideinfo_to_npz_bytes(side: WatermarkSideInfo) -> bytes:
+    buf = io.BytesIO()
+    np.savez_compressed(
+        buf,
+        S_cover=side.S_cover,
+        Uw=side.Uw,
+        Vtw=side.Vtw,
+        alpha=np.array([side.alpha], dtype=np.float32),
+        cover_shape=np.array(side.cover_shape, dtype=np.int32),
+        wm_shape=np.array(side.wm_shape, dtype=np.int32),
+    )
+    return buf.getvalue()
+
+
+def npz_bytes_to_sideinfo(b: bytes) -> WatermarkSideInfo:
+    sio = io.BytesIO(b)
+    npz = np.load(sio, allow_pickle=False)
+    return WatermarkSideInfo(
+        S_cover=npz["S_cover"],
+        Uw=npz["Uw"],
+        Vtw=npz["Vtw"],
+        alpha=float(npz["alpha"][0]),
+        cover_shape=tuple(npz["cover_shape"]),
+        wm_shape=tuple(npz["wm_shape"]),
+    )
+
+
+# -------------------- ECIES (ECC + AES-GCM) --------------------
+
+
+def generate_ecc_keypair() -> Tuple[bytes, bytes]:
+    priv = ec.generate_private_key(ec.SECP256R1())
+    pub = priv.public_key()
+    priv_pem = priv.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+    pub_pem = pub.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    return priv_pem, pub_pem
+
+
+def load_private_key(pem: bytes):
+    return load_pem_private_key(pem, password=None)
+
+
+def load_public_key(pem: bytes):
+    return load_pem_public_key(pem)
+
+
+def ecies_encrypt(plaintext: bytes, recipient_pub_pem: bytes) -> Dict[str, Any]:
+    recipient_pub = load_public_key(recipient_pub_pem)
+    eph_priv = ec.generate_private_key(ec.SECP256R1())
+    eph_pub = eph_priv.public_key()
+
+    shared = eph_priv.exchange(ec.ECDH(), recipient_pub)
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"ECIES-P256-AESGCM").derive(shared)
+
+    aesgcm = AESGCM(key)
+    nonce = secrets.token_bytes(12)
+    ct = aesgcm.encrypt(nonce, plaintext, associated_data=None)
+
+    eph_pub_bytes = eph_pub.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+    return {
+        "ephemeral_pub": b64e(eph_pub_bytes),
+        "nonce": b64e(nonce),
+        "ciphertext": b64e(ct),
+    }
+
+
+def ecies_decrypt(payload: Dict[str, Any], recipient_priv_pem: bytes) -> bytes:
+    priv = load_private_key(recipient_priv_pem)
+    eph_pub_bytes = b64d(payload["ephemeral_pub"]) 
+    eph_pub = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), eph_pub_bytes)
+    shared = priv.exchange(ec.ECDH(), eph_pub)
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"ECIES-P256-AESGCM").derive(shared)
+    aesgcm = AESGCM(key)
+    nonce = b64d(payload["nonce"]) 
+    ct = b64d(payload["ciphertext"]) 
+    pt = aesgcm.decrypt(nonce, ct, associated_data=None)
+    return pt
+
+
+# -------------------- Streamlit UI --------------------
+
+
+st.set_page_config(page_title="ECIES + DWT–SVD Watermarking (Single Page)", layout="wide")
+
+if "ecc_priv_pem" not in st.session_state:
+    priv_pem, pub_pem = generate_ecc_keypair()
+    st.session_state.ecc_priv_pem = priv_pem
+    st.session_state.ecc_pub_pem = pub_pem
+
+if "sideinfo" not in st.session_state:
+    st.session_state.sideinfo = None
+
+st.title("Implementasi ECIES (ECC) + Watermarking DWT–SVD")
+st.caption("Single-page: embed watermark (DWT–SVD), enkripsi ECIES, dekripsi, dan ekstraksi.")
+
+with st.sidebar:
+    st.header("Input")
+    cover_file = st.file_uploader("Cover Image (host)", type=["png", "jpg", "jpeg", "bmp"])
+    wm_file = st.file_uploader("Watermark Image (logo/grayscale)", type=["png", "jpg", "jpeg", "bmp"])
+    alpha = st.slider("Alpha (kekuatan watermark)", 0.01, 0.25, 0.05, 0.01)
+    st.divider()
+    st.subheader("ECC Keys")
+    if st.button("Generate New ECC Keypair"):
+        priv_pem, pub_pem = generate_ecc_keypair()
+        st.session_state.ecc_priv_pem = priv_pem
+        st.session_state.ecc_pub_pem = pub_pem
+        st.success("Keypair baru dibuat.")
+
+    st.download_button("Download Public Key (PEM)", data=st.session_state.ecc_pub_pem, file_name="ecc_pub.pem", mime="application/x-pem-file")
+    st.download_button("Download Private Key (PEM)", data=st.session_state.ecc_priv_pem, file_name="ecc_priv.pem", mime="application/x-pem-file")
+
+    st.divider()
+    st.subheader("Kunci Pihak Lain")
+    up_pub = st.file_uploader("Upload Recipient Public Key (PEM) untuk Enkripsi", type=["pem"])
+    up_priv = st.file_uploader("Upload Recipient Private Key (PEM) untuk Dekripsi", type=["pem"])
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("1) Embedding Watermark")
+    if cover_file and wm_file:
+        cover_img = Image.open(cover_file).convert("RGB")
+        wm_img = Image.open(wm_file).convert("RGB")
+
+        st.image(cover_img, caption="Cover Image", use_column_width=True)
+        st.image(wm_img, caption="Watermark Image", use_column_width=True)
+
+        if st.button("Embed Watermark (DWT–SVD)"):
+            wm_out, side = dwt_svd_embed(cover_img, wm_img, alpha=alpha)
+            st.session_state.watermarked_img = wm_out
+            st.session_state.sideinfo = side
+            st.success("Watermark embedded.")
+
+    if "watermarked_img" in st.session_state:
+        st.image(st.session_state.watermarked_img, caption="Watermarked (Grayscale)", use_column_width=True)
+
+        side: WatermarkSideInfo = st.session_state.sideinfo
+        side_bytes = sideinfo_to_npz_bytes(side)
+        side_meta_json = json.dumps({
+            "type": "dwt_svd_sideinfo_npz_b64",
+            "payload": b64e(side_bytes),
+        }).encode("utf-8")
+
+        st.download_button(
+            "Download Watermarked Image (PNG)",
+            data=bytes_from_image(st.session_state.watermarked_img, "PNG"),
+            file_name="watermarked.png",
+            mime="image/png",
+        )
+        st.download_button(
+            "Download Side-Info (JSON b64 npz)",
+            data=side_meta_json,
+            file_name="sideinfo.json",
+            mime="application/json",
+        )
+
+with col2:
+    st.subheader("2) Enkripsi Hasil (ECIES)")
+    if "watermarked_img" in st.session_state and st.session_state.sideinfo is not None:
+        recipient_pub_pem = up_pub.read() if up_pub is not None else st.session_state.ecc_pub_pem
+
+        watermarked_bytes = bytes_from_image(st.session_state.watermarked_img, "PNG")
+        side_bytes = sideinfo_to_npz_bytes(st.session_state.sideinfo)
+        package = {
+            "image_png_b64": b64e(watermarked_bytes),
+            "sideinfo_npz_b64": b64e(side_bytes),
+        }
+        package_bytes = json.dumps(package).encode("utf-8")
+
+        if st.button("Encrypt Package (Image + SideInfo)"):
+            enc = ecies_encrypt(package_bytes, recipient_pub_pem)
+            enc_json = json.dumps(enc, indent=2).encode("utf-8")
+            st.download_button("Download Encrypted Package (JSON)", data=enc_json, file_name="package.enc.json", mime="application/json")
+            st.success("Package terenkripsi siap diunduh.")
+
+    st.subheader("3) Dekripsi & Ekstraksi")
+    enc_file = st.file_uploader("Upload Encrypted Package (JSON)", type=["json"], key="enc_upl")
+    if enc_file is not None:
+        try:
+            enc_payload = json.loads(enc_file.read().decode("utf-8"))
+        except Exception as e:
+            st.error(f"File terenkripsi tidak valid: {e}")
+            enc_payload = None
+
+        if enc_payload is not None:
+            recipient_priv_pem = up_priv.read() if up_priv is not None else st.session_state.ecc_priv_pem
+
+            if st.button("Decrypt Package"):
+                try:
+                    pt = ecies_decrypt(enc_payload, recipient_priv_pem)
+                    package = json.loads(pt.decode("utf-8"))
+
+                    img_b = b64d(package["image_png_b64"]) 
+                    side_b = b64d(package["sideinfo_npz_b64"]) 
+                    wm_img = image_from_bytes(img_b).convert("L")
+                    st.image(wm_img, caption="Decrypted Watermarked Image", use_column_width=True)
+
+                    try:
+                        side = npz_bytes_to_sideinfo(side_b)
+                    except Exception as e:
+                        st.error(f"Side-info tidak valid: {e}")
+                        side = None
+
+                    if side is not None:
+                        if st.button("Extract Watermark (from Decrypted Image)"):
+                            extracted = dwt_svd_extract(wm_img, side)
+                            st.image(extracted, caption="Extracted Watermark (Grayscale)", use_column_width=True)
+                            st.download_button("Download Extracted Watermark (PNG)", data=bytes_from_image(extracted, "PNG"), file_name="extracted_watermark.png", mime="image/png")
+                except Exception as e:
+                    st.error(f"Dekripsi gagal: {e}")
+
+st.divider()
+with st.expander("Lihat Kunci Saat Ini (PEM)"):
+    st.code(st.session_state.ecc_pub_pem.decode("utf-8"), language="pem")
+    st.code(st.session_state.ecc_priv_pem.decode("utf-8"), language="pem")
+
+st.caption("Catatan: Demo ini memakai grayscale untuk DWT–SVD (LL subband). Untuk produksi, gunakan manajemen kunci aman, AAD, dan validasi input yang ketat.")
+
+
