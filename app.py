@@ -49,6 +49,15 @@ def b64d(s: str) -> bytes:
     return base64.b64decode(s.encode("utf-8"))
 
 
+def pem_body_base64(pem_bytes: bytes) -> str:
+    try:
+        lines = pem_bytes.decode("utf-8").splitlines()
+    except Exception:
+        return ""
+    body_lines = [ln.strip() for ln in lines if not ln.startswith("---") and len(ln.strip()) > 0]
+    return "".join(body_lines)
+
+
 # -------------------- DWT-SVD Watermarking --------------------
 
 
@@ -198,6 +207,16 @@ if "sideinfo" not in st.session_state:
 st.title("Implementasi ECIES (ECC) + Watermarking DWT–SVD")
 st.caption("Single-page: embed watermark (DWT–SVD), enkripsi ECIES, dekripsi, dan ekstraksi.")
 
+# Tombol Reset Semua
+def _reset_all_state():
+    keys = list(st.session_state.keys())
+    for k in keys:
+        del st.session_state[k]
+    try:
+        st.rerun()
+    except Exception:
+        st.experimental_rerun()
+
 with st.sidebar:
     st.header("Input")
     cover_file = st.file_uploader("Cover Image (host)", type=["png", "jpg", "jpeg", "bmp"])
@@ -211,13 +230,18 @@ with st.sidebar:
         st.session_state.ecc_pub_pem = pub_pem
         st.success("Keypair baru dibuat.")
 
-    st.download_button("Download Public Key (PEM)", data=st.session_state.ecc_pub_pem, file_name="ecc_pub.pem", mime="application/x-pem-file")
-    st.download_button("Download Private Key (PEM)", data=st.session_state.ecc_priv_pem, file_name="ecc_priv.pem", mime="application/x-pem-file")
+    # Provide single download per key (Base64 body only, no PEM headers)
+    st.download_button("Download Public Key", data=pem_body_base64(st.session_state.ecc_pub_pem), file_name="ecc_public_base64.txt", mime="text/plain")
+    st.download_button("Download Private Key", data=pem_body_base64(st.session_state.ecc_priv_pem), file_name="ecc_private_base64.txt", mime="text/plain")
 
     st.divider()
     st.subheader("Kunci Pihak Lain")
     up_pub = st.file_uploader("Upload Recipient Public Key (PEM) untuk Enkripsi", type=["pem"])
     up_priv = st.file_uploader("Upload Recipient Private Key (PEM) untuk Dekripsi", type=["pem"])
+
+    st.divider()
+    if st.button("Reset Semua"):
+        _reset_all_state()
 
 col1, col2 = st.columns(2)
 
@@ -239,24 +263,11 @@ with col1:
     if "watermarked_img" in st.session_state:
         st.image(st.session_state.watermarked_img, caption="Watermarked (Grayscale)", use_column_width=True)
 
-        side: WatermarkSideInfo = st.session_state.sideinfo
-        side_bytes = sideinfo_to_npz_bytes(side)
-        side_meta_json = json.dumps({
-            "type": "dwt_svd_sideinfo_npz_b64",
-            "payload": b64e(side_bytes),
-        }).encode("utf-8")
-
         st.download_button(
             "Download Watermarked Image (PNG)",
             data=bytes_from_image(st.session_state.watermarked_img, "PNG"),
             file_name="watermarked.png",
             mime="image/png",
-        )
-        st.download_button(
-            "Download Side-Info (JSON b64 npz)",
-            data=side_meta_json,
-            file_name="sideinfo.json",
-            mime="application/json",
         )
 
 with col2:
@@ -316,9 +327,7 @@ with col2:
 
 st.divider()
 with st.expander("Lihat Kunci Saat Ini (PEM)"):
-    st.code(st.session_state.ecc_pub_pem.decode("utf-8"), language="pem")
-    st.code(st.session_state.ecc_priv_pem.decode("utf-8"), language="pem")
-
-st.caption("Catatan: Demo ini memakai grayscale untuk DWT–SVD (LL subband). Untuk produksi, gunakan manajemen kunci aman, AAD, dan validasi input yang ketat.")
-
+    # Display without PEM headers/footers as requested
+    st.code(pem_body_base64(st.session_state.ecc_pub_pem), language="text")
+    st.code(pem_body_base64(st.session_state.ecc_priv_pem), language="text")
 
