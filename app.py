@@ -100,12 +100,26 @@ def dwt_svd_embed(cover_img: Image.Image, wm_img: Image.Image, alpha: float = 0.
 
 
 def dwt_svd_extract(wm_image: Image.Image, side: WatermarkSideInfo) -> Image.Image:
-    Cw = pil_to_array_gray(wm_image)
+    Cw = pil_to_array_gray(wm_image).astype(np.float32)
     LLw, _ = pywt.dwt2(Cw, 'haar')
-    Ucw, Scw, Vtcw = np.linalg.svd(LLw, full_matrices=False)
+    Ucw, Scw, Vtcw = np.linalg.svd(LLw.astype(np.float32), full_matrices=False)
 
-    Sw_est = (Scw - side.S_cover) / max(side.alpha, 1e-8)
-    W_est = (side.Uw @ np.diag(Sw_est) @ side.Vtw)
+    # Robust alignment in case of slight size/rounding mismatches
+    len_scw = Scw.shape[0]
+    len_sc = side.S_cover.shape[0]
+    uw_cols = side.Uw.shape[1]
+    vtw_rows = side.Vtw.shape[0]
+    k = min(len_scw, len_sc, uw_cols, vtw_rows)
+    if k <= 0:
+        raise ValueError("Invalid SVD dimensions for extraction")
+
+    Scw_k = Scw[:k]
+    Sc_k = side.S_cover[:k]
+    Uw_k = side.Uw[:, :k]
+    Vtw_k = side.Vtw[:k, :]
+
+    Sw_est = (Scw_k - Sc_k) / max(side.alpha, 1e-8)
+    W_est = (Uw_k @ np.diag(Sw_est) @ Vtw_k)
     W_est = np.clip(W_est, 0, 255).astype(np.uint8)
 
     img = Image.fromarray(W_est, mode="L").resize((side.wm_shape[1], side.wm_shape[0]), Image.NEAREST)
@@ -212,10 +226,7 @@ def _reset_all_state():
     keys = list(st.session_state.keys())
     for k in keys:
         del st.session_state[k]
-    try:
-        st.rerun()
-    except Exception:
-        st.experimental_rerun()
+    st.rerun()
 
 with st.sidebar:
     st.header("Input")
@@ -309,25 +320,42 @@ with col2:
                     img_b = b64d(package["image_png_b64"]) 
                     side_b = b64d(package["sideinfo_npz_b64"]) 
                     wm_img = image_from_bytes(img_b).convert("L")
-                    st.image(wm_img, caption="Decrypted Watermarked Image", use_column_width=True)
 
+                    # Pastikan dimensi konsisten untuk ekstraksi
                     try:
                         side = npz_bytes_to_sideinfo(side_b)
+                        # Pastikan ukuran gambar sama dengan cover_shape yang tersimpan
+                        expected_size = (side.cover_shape[1], side.cover_shape[0])
+                        if wm_img.size != expected_size:
+                            wm_img = wm_img.resize(expected_size, Image.BICUBIC)
+
+                        # Simpan ke session state
+                        st.session_state.decrypted_img = wm_img
+                        st.session_state.decrypted_side = side
+                        st.info(f"Ukuran decrypted: {wm_img.size}, cover_shape: {expected_size}, alpha: {side.alpha}")
+                        st.success("Dekripsi berhasil! Silakan klik tombol Extract di bawah.")
                     except Exception as e:
                         st.error(f"Side-info tidak valid: {e}")
-                        side = None
+                        st.session_state.decrypted_img = wm_img
+                        st.session_state.decrypted_side = None
 
-                    if side is not None:
-                        if st.button("Extract Watermark (from Decrypted Image)"):
-                            extracted = dwt_svd_extract(wm_img, side)
-                            st.image(extracted, caption="Extracted Watermark (Grayscale)", use_column_width=True)
-                            st.download_button("Download Extracted Watermark (PNG)", data=bytes_from_image(extracted, "PNG"), file_name="extracted_watermark.png", mime="image/png")
                 except Exception as e:
                     st.error(f"Dekripsi gagal: {e}")
 
-st.divider()
-with st.expander("Lihat Kunci Saat Ini (PEM)"):
-    # Display without PEM headers/footers as requested
-    st.code(pem_body_base64(st.session_state.ecc_pub_pem), language="text")
-    st.code(pem_body_base64(st.session_state.ecc_priv_pem), language="text")
-
+    # Tampilkan hasil dekripsi jika ada
+    if "decrypted_img" in st.session_state:
+        st.image(st.session_state.decrypted_img, caption="Decrypted Watermarked Image", use_column_width=True)
+        
+        if "decrypted_side" in st.session_state and st.session_state.decrypted_side is not None:
+            if st.button("Extract Watermark (from Decrypted Image)"):
+                try:
+                    extracted = dwt_svd_extract(st.session_state.decrypted_img, st.session_state.decrypted_side)
+                    st.session_state.extracted_wm = extracted
+                    st.success("Ekstraksi watermark berhasil!")
+                except Exception as e:
+                    st.error(f"Ekstraksi gagal: {e}")
+            
+            # Tampilkan watermark yang diekstrak jika ada
+            if "extracted_wm" in st.session_state:
+                st.image(st.session_state.extracted_wm, caption="Extracted Watermark (Grayscale)", use_column_width=True)
+                st.download_button("Download Extracted Watermark (PNG)", data=bytes_from_image(st.session_state.extracted_wm, "PNG"), file_name="extracted_watermark.png", mime="image/png")
