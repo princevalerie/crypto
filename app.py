@@ -262,8 +262,8 @@ with col1:
         cover_img = Image.open(cover_file).convert("RGB")
         wm_img = Image.open(wm_file).convert("RGB")
 
-        st.image(cover_img, caption="Cover Image", use_column_width=True)
-        st.image(wm_img, caption="Watermark Image", use_column_width=True)
+        st.image(cover_img, caption="Cover Image", use_container_width=True)
+        st.image(wm_img, caption="Watermark Image", use_container_width=True)
 
         if st.button("Embed Watermark (DWT–SVD)"):
             wm_out, side = dwt_svd_embed(cover_img, wm_img, alpha=alpha)
@@ -272,7 +272,7 @@ with col1:
             st.success("Watermark embedded.")
 
     if "watermarked_img" in st.session_state:
-        st.image(st.session_state.watermarked_img, caption="Watermarked (Grayscale)", use_column_width=True)
+        st.image(st.session_state.watermarked_img, caption="Watermarked (Grayscale)", use_container_width=True)
 
         st.download_button(
             "Download Watermarked Image (PNG)",
@@ -344,7 +344,7 @@ with col2:
 
     # Tampilkan hasil dekripsi jika ada
     if "decrypted_img" in st.session_state:
-        st.image(st.session_state.decrypted_img, caption="Decrypted Watermarked Image", use_column_width=True)
+        st.image(st.session_state.decrypted_img, caption="Decrypted Watermarked Image", use_container_width=True)
         
         if "decrypted_side" in st.session_state and st.session_state.decrypted_side is not None:
             if st.button("Extract Watermark (from Decrypted Image)"):
@@ -357,5 +357,5 @@ with col2:
             
             # Tampilkan watermark yang diekstrak jika ada
             if "extracted_wm" in st.session_state:
-                st.image(st.session_state.extracted_wm, caption="Extracted Watermark (Grayscale)", use_column_width=True)
+                st.image(st.session_state.extracted_wm, caption="Extracted Watermark (Grayscale)", use_container_width=True)
                 st.download_button("Download Extracted Watermark (PNG)", data=bytes_from_image(st.session_state.extracted_wm, "PNG"), file_name="extracted_watermark.png", mime="image/png")
