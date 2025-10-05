@@ -232,7 +232,7 @@ with st.sidebar:
     st.header("Input")
     cover_file = st.file_uploader("Cover Image (host)", type=["png", "jpg", "jpeg", "bmp"])
     wm_file = st.file_uploader("Watermark Image (logo/grayscale)", type=["png", "jpg", "jpeg", "bmp"])
-    alpha = st.slider("Alpha (kekuatan watermark)", 0.01, 0.25, 0.05, 0.01)
+    alpha = st.slider("Alpha (kekuatan watermark)", 0.01, 0.50, 0.25, 0.01)
     st.divider()
     st.subheader("ECC Keys")
     if st.button("Generate New ECC Keypair"):
@@ -359,3 +359,4 @@ with col2:
             if "extracted_wm" in st.session_state:
                 st.image(st.session_state.extracted_wm, caption="Extracted Watermark (Grayscale)", use_container_width=True)
                 st.download_button("Download Extracted Watermark (PNG)", data=bytes_from_image(st.session_state.extracted_wm, "PNG"), file_name="extracted_watermark.png", mime="image/png")
+
