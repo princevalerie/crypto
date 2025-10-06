@@ -7,7 +7,7 @@ from typing import Tuple, Dict, Any
 
 import numpy as np
 import pywt
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 import streamlit as st
 
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -56,6 +56,15 @@ def pem_body_base64(pem_bytes: bytes) -> str:
         return ""
     body_lines = [ln.strip() for ln in lines if not ln.startswith("---") and len(ln.strip()) > 0]
     return "".join(body_lines)
+
+
+# Streamlit image compatibility (new vs old param names)
+def st_image_compat(img, caption=None):
+    try:
+        return st.image(img, caption=caption, use_container_width=True)
+    except TypeError:
+        return st.image(img, caption=caption, use_column_width=True)
+
 
 
 # -------------------- DWT-SVD Watermarking --------------------
@@ -223,16 +232,26 @@ st.caption("Single-page: embed watermark (DWT–SVD), enkripsi ECIES, dekripsi, 
 
 # Tombol Reset Semua
 def _reset_all_state():
+    # Clear Streamlit caches (if any) and wipe all session_state keys
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
     keys = list(st.session_state.keys())
     for k in keys:
         del st.session_state[k]
+    # Rerun will re-trigger key generation at startup
     st.rerun()
 
 with st.sidebar:
     st.header("Input")
     cover_file = st.file_uploader("Cover Image (host)", type=["png", "jpg", "jpeg", "bmp"])
     wm_file = st.file_uploader("Watermark Image (logo/grayscale)", type=["png", "jpg", "jpeg", "bmp"])
-    alpha = st.slider("Alpha (kekuatan watermark)", 0.01, 0.50, 0.30, 0.01)
+    alpha = st.slider("Alpha (kekuatan watermark)",  0.01, 0.50, 0.30, 0.01)
     st.divider()
     st.subheader("ECC Keys")
     if st.button("Generate New ECC Keypair"):
@@ -241,14 +260,30 @@ with st.sidebar:
         st.session_state.ecc_pub_pem = pub_pem
         st.success("Keypair baru dibuat.")
 
-    # Provide single download per key (Base64 body only, no PEM headers)
-    st.download_button("Download Public Key", data=pem_body_base64(st.session_state.ecc_pub_pem), file_name="ecc_public_base64.txt", mime="text/plain")
-    st.download_button("Download Private Key", data=pem_body_base64(st.session_state.ecc_priv_pem), file_name="ecc_private_base64.txt", mime="text/plain")
+    # Download ECC keys as proper PEM files
+    st.download_button("Download ECC Public Key (.pem)", data=st.session_state.ecc_pub_pem, file_name="ecc_public.pem", mime="application/x-pem-file")
+    st.download_button("Download ECC Private Key (.pem)", data=st.session_state.ecc_priv_pem, file_name="ecc_private.pem", mime="application/x-pem-file")
+
+    # (Paste PEM inputs removed as requested)
 
     st.divider()
     st.subheader("Kunci Pihak Lain")
     up_pub = st.file_uploader("Upload Recipient Public Key (PEM) untuk Enkripsi", type=["pem"])
+    if up_pub is not None:
+        try:
+            new_pub = up_pub.read()
+            st.session_state.ecc_pub_pem = new_pub
+            st.success("Public key diupdate dari upload (menimpa current).")
+        except Exception as e:
+            st.error(f"Gagal memuat public key: {e}")
     up_priv = st.file_uploader("Upload Recipient Private Key (PEM) untuk Dekripsi", type=["pem"])
+    if up_priv is not None:
+        try:
+            new_priv = up_priv.read()
+            st.session_state.ecc_priv_pem = new_priv
+            st.success("Private key diupdate dari upload (menimpa current).")
+        except Exception as e:
+            st.error(f"Gagal memuat private key: {e}")
 
     st.divider()
     if st.button("Reset Semua"):
@@ -262,8 +297,8 @@ with col1:
         cover_img = Image.open(cover_file).convert("RGB")
         wm_img = Image.open(wm_file).convert("RGB")
 
-        st.image(cover_img, caption="Cover Image", use_container_width=True)
-        st.image(wm_img, caption="Watermark Image", use_container_width=True)
+        st_image_compat(cover_img, caption="Cover Image")
+        st_image_compat(wm_img, caption="Watermark Image")
 
         if st.button("Embed Watermark (DWT–SVD)"):
             wm_out, side = dwt_svd_embed(cover_img, wm_img, alpha=alpha)
@@ -272,7 +307,7 @@ with col1:
             st.success("Watermark embedded.")
 
     if "watermarked_img" in st.session_state:
-        st.image(st.session_state.watermarked_img, caption="Watermarked (Grayscale)", use_container_width=True)
+        st_image_compat(st.session_state.watermarked_img, caption="Watermarked (Grayscale)")
 
         st.download_button(
             "Download Watermarked Image (PNG)",
@@ -284,7 +319,7 @@ with col1:
 with col2:
     st.subheader("2) Enkripsi Hasil (ECIES)")
     if "watermarked_img" in st.session_state and st.session_state.sideinfo is not None:
-        recipient_pub_pem = up_pub.read() if up_pub is not None else st.session_state.ecc_pub_pem
+        recipient_pub_pem = st.session_state.ecc_pub_pem
 
         watermarked_bytes = bytes_from_image(st.session_state.watermarked_img, "PNG")
         side_bytes = sideinfo_to_npz_bytes(st.session_state.sideinfo)
@@ -310,7 +345,7 @@ with col2:
             enc_payload = None
 
         if enc_payload is not None:
-            recipient_priv_pem = up_priv.read() if up_priv is not None else st.session_state.ecc_priv_pem
+            recipient_priv_pem = st.session_state.ecc_priv_pem
 
             if st.button("Decrypt Package"):
                 try:
@@ -344,7 +379,7 @@ with col2:
 
     # Tampilkan hasil dekripsi jika ada
     if "decrypted_img" in st.session_state:
-        st.image(st.session_state.decrypted_img, caption="Decrypted Watermarked Image", use_container_width=True)
+        st_image_compat(st.session_state.decrypted_img, caption="Decrypted Watermarked Image")
         
         if "decrypted_side" in st.session_state and st.session_state.decrypted_side is not None:
             if st.button("Extract Watermark (from Decrypted Image)"):
@@ -357,7 +392,22 @@ with col2:
             
             # Tampilkan watermark yang diekstrak jika ada
             if "extracted_wm" in st.session_state:
-                st.image(st.session_state.extracted_wm, caption="Extracted Watermark (Grayscale)", use_container_width=True)
+                st_image_compat(st.session_state.extracted_wm, caption="Extracted Watermark (Grayscale)")
                 st.download_button("Download Extracted Watermark (PNG)", data=bytes_from_image(st.session_state.extracted_wm, "PNG"), file_name="extracted_watermark.png", mime="image/png")
 
-
+# -------------------- Keys Display (Bottom) --------------------
+st.divider()
+st.subheader("ECC Keys (Current Values)")
+col_k1, col_k2 = st.columns(2)
+with col_k1:
+    st.caption("Public Key (PEM)")
+    try:
+        st.code(st.session_state.ecc_pub_pem.decode("utf-8"))
+    except Exception:
+        st.code("<invalid public key bytes>")
+with col_k2:
+    st.caption("Private Key (PEM)")
+    try:
+        st.code(st.session_state.ecc_priv_pem.decode("utf-8"))
+    except Exception:
+        st.code("<invalid private key bytes>")
