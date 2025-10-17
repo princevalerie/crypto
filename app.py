@@ -378,8 +378,8 @@ if st.session_state.watermarked_img is not None:
 
     st.markdown("**Langkah 3: Enkripsi & Unduh JSON**")
     enc_disabled = st.session_state.get("sideinfo") is None
-    if st.button("Encrypt & Download JSON", disabled=enc_disabled):
-        try:
+    try:
+        if not enc_disabled:
             recipient_pub_pem = st.session_state.ecc_pub_pem
             watermarked_bytes = bytes_from_image(st.session_state.watermarked_img, "PNG")
             side_bytes = sideinfo_to_npz_bytes(st.session_state.sideinfo)
@@ -390,12 +390,25 @@ if st.session_state.watermarked_img is not None:
             package_bytes = json.dumps(package).encode("utf-8")
             enc = ecies_encrypt(package_bytes, recipient_pub_pem)
             enc_json = json.dumps(enc, indent=2).encode("utf-8")
-            st.download_button("Download Encrypted Package (JSON)", data=enc_json, file_name="package.enc.json", mime="application/json")
+            st.download_button(
+                "Encrypt Now & Download JSON",
+                data=enc_json,
+                file_name="package.enc.json",
+                mime="application/json",
+                disabled=enc_disabled,
+            )
             st.session_state.encrypted_payload = enc
             st.session_state.last_package_bytes = package_bytes
-            st.success("Package terenkripsi siap diunduh dan siap untuk didekripsi.")
-        except Exception as e:
-            st.error(f"Gagal enkripsi: {e}")
+        else:
+            st.download_button(
+                "Encrypt Now & Download JSON",
+                data=b"",
+                file_name="package.enc.json",
+                mime="application/json",
+                disabled=True,
+            )
+    except Exception as e:
+        st.error(f"Gagal enkripsi: {e}")
 
     st.divider()
     st.subheader("Langkah 4: Decrypt Now")
