@@ -469,17 +469,10 @@ if "decrypted_img" in st.session_state and st.session_state.decrypted_img is not
             x=alt.X("intensity:Q", title="Intensity (0-255)"),
             y=alt.Y("count:Q", title="Count"),
             color=alt.Color("type:N", scale=alt.Scale(domain=["Cover","Watermarked"], range=["#1f77b4","#ff7f0e"]))
-        ).properties(width="container", height=250)
+        ).properties(width="container", height=250, title="Histogram Intensitas: Cover vs Watermarked")
         st.altair_chart(chart, use_container_width=True)
 
-        delta = (dec_gray - cover_gray).astype(np.float32) + 127.5
-        df_delta = make_histogram_df(delta, bins=256)
-        chart_delta = alt.Chart(df_delta).mark_bar().encode(
-            x=alt.X("intensity:Q", title="Delta shifted (center≈127.5)"),
-            y=alt.Y("count:Q", title="Count")
-        ).properties(width="container", height=180)
-        st.caption("Histogram perbedaan intensitas (watermarked - cover), digeser agar terlihat simetris.")
-        st.altair_chart(chart_delta, use_container_width=True)
+        # Delta histogram removed per request
 
     # NCC jika watermark asli ada dan hasil ekstraksi tersedia
     if st.session_state.get("extracted_wm") is not None and st.session_state.wm_input_gray is not None:
