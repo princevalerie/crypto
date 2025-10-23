@@ -398,7 +398,7 @@ st.markdown("""
     
     /* Memperkecil metrics dan evaluasi */
     .stMetric {
-        font-size: 14px !important;
+        font-size: 20px !important;
         margin-bottom: 0.25rem !important;
     }
     .stMetric > div > div {
@@ -776,4 +776,5 @@ with col_eval:
             st.altair_chart(chart, use_container_width=True)
 
 # Keys display moved to sidebar
+
 
