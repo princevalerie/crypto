@@ -538,6 +538,8 @@ with st.sidebar:
 # Create 1:3 layout (enkripsi:dekripsi:evaluasi)
 col_encrypt, col_decrypt, col_eval = st.columns([1, 1, 1])
 
+st.markdown("<div style='text-align: center; margin-bottom: 1rem;'><h3 style='color: #666; font-size: 1.2rem; margin: 0;'>🔐 ECIES + DWT-SVD Watermarking System</h3></div>", unsafe_allow_html=True)
+
 with col_encrypt:
     # Enkripsi section
     st.markdown("#### 🔐 ENKRIPSI")
