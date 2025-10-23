@@ -360,7 +360,7 @@ st.markdown("""
 <style>
     /* Mengurangi padding atas dan spacing */
     .main .block-container {
-        padding-top: 2rem !important;
+        padding-top: 0.1rem !important;
         padding-bottom: 0.5rem !important;
         padding-left: 0.5rem !important;
         padding-right: 0.5rem !important;
@@ -398,14 +398,14 @@ st.markdown("""
     
     /* Memperkecil metrics dan evaluasi */
     .stMetric {
-        font-size: 10px !important;
+        font-size: 14px !important;
         margin-bottom: 0.25rem !important;
     }
     .stMetric > div > div {
-        font-size: 10px !important;
+        font-size: 14px !important;
     }
     .stMetric > div > div > div {
-        font-size: 9px !important;
+        font-size: 14px !important;
     }
     
     .stCaption {
@@ -776,3 +776,4 @@ with col_eval:
             st.altair_chart(chart, use_container_width=True)
 
 # Keys display moved to sidebar
+
