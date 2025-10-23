@@ -366,6 +366,17 @@ st.markdown("""
         padding-right: 0.5rem !important;
     }
     
+    /* PERBAIKAN: Pastikan konten menempel ke atas */
+    .main .block-container > div {
+        padding-top: 0 !important;
+    }
+    
+    /* PERBAIKAN: Hapus margin atas dari elemen pertama */
+    .main .block-container > div:first-child {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
+    
     /* Mengurangi margin antar elemen */
     .stMarkdown {
         margin-bottom: 0.25rem !important;
@@ -421,9 +432,15 @@ st.markdown("""
     
     /* Mengurangi margin header */
     h1, h2, h3, h4, h5, h6 {
-        margin-top: 0.25rem !important;
+        margin-top: 0 !important;
         margin-bottom: 0.25rem !important;
         font-size: 1.1rem !important;
+    }
+    
+    /* PERBAIKAN: Hapus margin atas dari semua elemen */
+    .main .block-container > div > div {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
     }
     
     /* Memperkecil chart dan histogram */
@@ -777,6 +794,7 @@ with col_eval:
             ).properties(width=180, height=60)
             st.altair_chart(chart, use_container_width=True)
 
-# Keys display moved to sidebar
+
+
 
 
