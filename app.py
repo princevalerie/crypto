@@ -360,21 +360,10 @@ st.markdown("""
 <style>
     /* Mengurangi padding atas dan spacing */
     .main .block-container {
-        padding-top: 0.1rem !important;
+        padding-top: 2rem !important;
         padding-bottom: 0.5rem !important;
         padding-left: 0.5rem !important;
         padding-right: 0.5rem !important;
-    }
-    
-    /* PERBAIKAN: Pastikan konten menempel ke atas */
-    .main .block-container > div {
-        padding-top: 0 !important;
-    }
-    
-    /* PERBAIKAN: Hapus margin atas dari elemen pertama */
-    .main .block-container > div:first-child {
-        margin-top: 0 !important;
-        padding-top: 0 !important;
     }
     
     /* Mengurangi margin antar elemen */
@@ -432,33 +421,9 @@ st.markdown("""
     
     /* Mengurangi margin header */
     h1, h2, h3, h4, h5, h6 {
-        margin-top: 0 !important;
+        margin-top: 0.25rem !important;
         margin-bottom: 0.25rem !important;
         font-size: 1.1rem !important;
-    }
-    
-    /* PERBAIKAN: Hapus margin atas dari semua elemen */
-    .main .block-container > div > div {
-        margin-top: 0 !important;
-        padding-top: 0 !important;
-    }
-    
-    /* PERBAIKAN KHUSUS UNTUK STREAMLIT CLOUD */
-    .main .block-container {
-        margin-top: 0 !important;
-        padding-top: 0 !important;
-    }
-    
-    /* Hapus spacing dari elemen pertama di main */
-    .main > div:first-child {
-        margin-top: 0 !important;
-        padding-top: 0 !important;
-    }
-    
-    /* Hapus spacing dari stMarkdown pertama */
-    .main .stMarkdown:first-child {
-        margin-top: 0 !important;
-        padding-top: 0 !important;
     }
     
     /* Memperkecil chart dan histogram */
@@ -570,9 +535,6 @@ with st.sidebar:
             st.code("<invalid private key bytes>")
 
 ## -------------------- Main Grid Layout --------------------
-# Judul kecil di tengah - HARUS SEBELUM st.columns()
-st.markdown("<div style='text-align: center; margin-bottom: 1rem;'><h3 style='color: #666; font-size: 1.2rem; margin: 0;'>🔐 ECIES + DWT-SVD Watermarking System</h3></div>", unsafe_allow_html=True)
-
 # Create 1:3 layout (enkripsi:dekripsi:evaluasi)
 col_encrypt, col_decrypt, col_eval = st.columns([1, 1, 1])
 
