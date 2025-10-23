@@ -360,7 +360,7 @@ st.markdown("""
 <style>
     /* Mengurangi padding atas dan spacing */
     .main .block-container {
-        padding-top: 2rem !important;
+        padding-top: 0.5rem !important;
         padding-bottom: 0.5rem !important;
         padding-left: 0.5rem !important;
         padding-right: 0.5rem !important;
@@ -778,3 +778,4 @@ with col_eval:
             st.altair_chart(chart, use_container_width=True)
 
 # Keys display moved to sidebar
+
